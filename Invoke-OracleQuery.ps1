@@ -61,7 +61,7 @@ function Invoke-OracleQuery {
     $OracleQueries = $Query -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
     $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
 
-    <#$Output =#> Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential {
+    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential {
         param($TargetDatabase, $OracleQueries, $DatabaseCredential)
 
         #Get the oracle home on the server so we can get then import the Oracle dll on the target 
