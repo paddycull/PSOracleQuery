@@ -61,18 +61,27 @@ function Invoke-OracleQuery {
     $OracleQueries = $Query -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
     $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
 
-    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential {
+    <#$Output =#> Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential {
         param($TargetDatabase, $OracleQueries, $DatabaseCredential)
 
         #Get the oracle home on the server so we can get then import the Oracle dll on the target 
-        $OracleServices = Get-WmiObject win32_service | Where-Object {$_.Name -like 'OracleService*' -and $_.State -eq 'Running'} | Select-Object Name, PathName
+        $OracleServices = Get-WmiObject win32_service | Where-Object {$_.Name -like 'OracleService*'} | Select-Object Name, PathName
+
+        if(!$OracleServices) {
+            Throw "No Oracle services running on $env:COMPUTERNAME"
+        }
+        
         #Only need one home, just use the first one returned.
         $FirstOracleService = $OracleServices[0].PathName
         #Split service string to extract home version and location
         $OracleHome = $FirstOracleService.Substring(0, $FirstOracleService.lastIndexOf('\bin\ORACLE.EXE'))
 
-        Add-Type -Path "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
-
+        try {
+            Add-Type -Path "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+        }
+        catch {
+            Throw "Issue adding Oracle.ManagedDataAccess.dll from the Oracle Home."
+        }
         
         $AllResults = @()
         $QueryCount = $OracleQueries.Count
