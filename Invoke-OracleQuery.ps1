@@ -32,8 +32,11 @@ function Invoke-OracleQuery {
         [Parameter(Mandatory)]
         [string] $TargetDatabase,
         
-        #DBCredential to connect to the database with. Defaults to current user as sysdba if not passed.
-        [PSCredential] $DBCredential,
+        #Credential to connect to the target computer. Defaults to current credential if not passed.
+        [PSCredential] $TargetCredential=[System.Management.Automation.PSCredential]::Empty, 
+
+        #User credential to connect to the database with. Defaults to current windows user as sysdba if not passed.
+        [PSCredential] $DatabaseCredential,
 
         #Query to run
         [string] $Query,
@@ -58,8 +61,8 @@ function Invoke-OracleQuery {
     $OracleQueries = $Query -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
     $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
 
-    $Output = Invoke-Command -ComputerName $TargetComputer -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DBCredential {
-        param($TargetDatabase, $OracleQueries, $DBCredential)
+    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential {
+        param($TargetDatabase, $OracleQueries, $DatabaseCredential)
 
         #Get the oracle home on the server so we can get then import the Oracle dll on the target 
         $OracleServices = Get-WmiObject win32_service | Where-Object {$_.Name -like 'OracleService*' -and $_.State -eq 'Running'} | Select-Object Name, PathName
@@ -76,9 +79,9 @@ function Invoke-OracleQuery {
 
 
         #If a credential is passed, we use that instead of using windows auth
-        if($DBCredential) {
-            $DbAccountUsername = $DBCredential.UserName
-            $DbAccountPassword = $DBCredential.GetNetworkCredential().password
+        if($DatabaseCredential) {
+            $DbAccountUsername = $DatabaseCredential.UserName
+            $DbAccountPassword = $DatabaseCredential.GetNetworkCredential().password
             $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=$TargetDatabase"
         }
 
