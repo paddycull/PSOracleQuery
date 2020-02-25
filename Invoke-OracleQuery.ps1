@@ -20,10 +20,11 @@
 
 .NOTES
     Author: Patrick Cull
-    Date: 03/02/2020
+    Date: 2020-02-03
 
-    2020-02-25
-    Now compatible with Oracle 11g
+    Update 2020-02-25
+    - Now compatible with Oracle 11g
+    - Now uses full connection string instead of EZConnect string to connect to databases.
 #>
 function Invoke-OracleQuery {
     param(   
@@ -51,11 +52,15 @@ function Invoke-OracleQuery {
         Throw "Please pass either a Query or a SqlFile to run against the target database."
     }
 
+    if($Query -and $SqlFile){
+        Throw "Cannot use the Query and SqlFile parameters together, use one or the other."
+    }
+
     if($SqlFile) {
         $Query = (Get-Content $SqlFile | Out-String).Trim()
     }
 
-    #If the final character in the query is a slash or semicolon, we remove it, as the oracleManagedDataAccess module does not allow thse characters at the end of a query
+    #If the final character in the query is a slash or semicolon, we remove it, as the oracleManagedDataAccess module does not allow these characters at the end of a query
     if($Query[-1] -eq "/" -or $Query[-1] -eq ';') {
         $Query = $Query -replace ".$"
     }
