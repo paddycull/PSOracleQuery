@@ -1,26 +1,29 @@
 <#
 .SYNOPSIS
-PowerShell script to query an Oracle database, using Windows Authentication. The user can pass a query directly, or a SQL file to run against a database.
+    PowerShell script to query an Oracle database, using Windows Authentication. The user can pass a query directly, or a SQL file to run against a database.
 
 .DESCRIPTION
-This script allows the user to query an Oracle database. the primary features are;
-    - You can pass a query directly or a sql file with queries in it.
-    - It uses Windows Authentication, so no credentials are requried.
-    - It uses the Oracle.ManagedDataAccess.dll that is already on the target, so there is no dependencies. 
-    - Can pass multiple queries at once, either directly through the Query parameter, or in a SQL file. Result set for over 1 query is a PSObject.
-    - If there's only one query, it returns the PSObject array as is. If it's multiple queries, it returns a special PSObject array, with a Query and ResultSet patameters.
+    This script allows the user to query an Oracle database. the primary features are;
+        - You can pass a query directly or a sql file with queries in it.
+        - It uses Windows Authentication, so no credentials are requried.
+        - It uses the Oracle.ManagedDataAccess.dll that is already on the target, so there is no dependencies. 
+        - Can pass multiple queries at once, either directly through the Query parameter, or in a SQL file. Result set for over 1 query is a PSObject.
+        - If there's only one query, it returns the PSObject array as is. If it's multiple queries, it returns a special PSObject array, with a Query and ResultSet patameters.
 
 .EXAMPLE
-Invoke-OracleQuery -TargetComputer VIRTORA195s -TargetDatabase PATPDB1 -Query "select username, account_status from dba_users;"
-    This example runs the given query against the PATPDB1 database on VIRTORA195s
+    Invoke-OracleQuery -TargetComputer VIRTORA195s -TargetDatabase PATPDB1 -Query "select username, account_status from dba_users;"
+        This example runs the given query against the PATPDB1 database on VIRTORA195s
 
 .EXAMPLE
-Invoke-OracleQuery -TargetComputer VIRTORA195s -TargetDatabase PATPDB1 -SqlFile C:\example\oracle.sql
-    This runs the oracle.sql file against the database.
+    Invoke-OracleQuery -TargetComputer VIRTORA195s -TargetDatabase PATPDB1 -SqlFile C:\example\oracle.sql
+        This runs the oracle.sql file against the database.
 
 .NOTES
-Author: Patrick Cull
-Date: 03/02/2020
+    Author: Patrick Cull
+    Date: 03/02/2020
+
+    2020-02-25
+    Now compatible with Oracle 11g
 #>
 function Invoke-OracleQuery {
     param(   
@@ -33,10 +36,10 @@ function Invoke-OracleQuery {
         [string] $TargetDatabase,
         
         #Credential to connect to the target computer. Defaults to current credential if not passed.
-        [PSCredential] $TargetCredential=[System.Management.Automation.PSCredential]::Empty, 
+        [System.Management.Automation.PSCredential] $TargetCredential=[System.Management.Automation.PSCredential]::Empty, 
 
         #User credential to connect to the database with. Defaults to current windows user as sysdba if not passed.
-        [PSCredential] $DatabaseCredential,
+        [System.Management.Automation.PSCredential] $DatabaseCredential,
 
         #Query to run
         [string] $Query,
@@ -61,26 +64,49 @@ function Invoke-OracleQuery {
     $OracleQueries = $Query -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
     $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
 
-    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential {
-        param($TargetDatabase, $OracleQueries, $DatabaseCredential)
+    #Get the oracle home on the server so we can get then import the Oracle dll on the target 
+    $OracleServices = Get-WmiObject win32_service -ComputerName $TargetComputer | Where-Object {$_.Name -like 'OracleService*'} | Select-Object Name, PathName
 
-        #Get the oracle home on the server so we can get then import the Oracle dll on the target 
-        $OracleServices = Get-WmiObject win32_service | Where-Object {$_.Name -like 'OracleService*'} | Select-Object Name, PathName
-
-        if(!$OracleServices) {
-            Throw "No Oracle services running on $env:COMPUTERNAME"
-        }
+    if(!$OracleServices) {
+        Throw "No Oracle services running on $env:COMPUTERNAME"
+    }
         
-        #Only need one home, just use the first one returned.
-        $FirstOracleService = $OracleServices[0].PathName
-        #Split service string to extract home version and location
-        $OracleHome = $FirstOracleService.Substring(0, $FirstOracleService.lastIndexOf('\bin\ORACLE.EXE'))
+    #Only need one home, just use the first one returned.
+    $FirstOracleService = $OracleServices[0].PathName
+    #Split service string to extract home version and location
+    $OracleHome = $FirstOracleService.Substring(0, $FirstOracleService.lastIndexOf('\bin\ORACLE.EXE'))
+    $NetworkOracleHome = "\\$TargetComputer\$OracleHome" -replace ':', '$'
+
+    #Check if the DLL is already on the server in the oracle home. If not, we upload it to the temp drive.
+    # Oracle 12g and up
+    if(Test-Path "$NetworkOracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll") {
+        $OracleDllLocation = "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+    }
+    #Oracle 11g
+    elseif(Test-Path "$NetworkOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll") {
+        $OracleDllLocation = "$OracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
+    }
+    else {
+        Throw "No Oracle.ManagedDataAccess.dll or Oracle.DataAccess.dll found in the Oracle home."
+    }
+
+
+    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential, $OracleDllLocation {
+        param($TargetDatabase, $OracleQueries, $DatabaseCredential, $OracleDllLocation)
 
         try {
-            Add-Type -Path "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+            Add-Type -Path $OracleDllLocation
         }
         catch {
             Throw "Issue adding Oracle.ManagedDataAccess.dll from the Oracle Home."
+        }
+        
+        #Set the DLL type depending on the file name that was loaded.
+        if($OracleDllLocation -like '*ManagedDataAccess*') {
+            $DllType = "ManagedDataAccess"
+        }
+        else {
+            $DllType = "DataAccess"
         }
         
         $AllResults = @()
@@ -91,11 +117,12 @@ function Invoke-OracleQuery {
         if($DatabaseCredential) {
             $DbAccountUsername = $DatabaseCredential.UserName
             $DbAccountPassword = $DatabaseCredential.GetNetworkCredential().password
-            $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=$TargetDatabase"
+            $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetComputer)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
+            Write-Host $ConnectionString
         }
 
         else {
-            $ConnectionString = "User Id=/;DBA Privilege=SYSDBA;Data Source=$TargetDatabase"
+            $ConnectionString = "User Id=/;DBA Privilege=SYSDBA;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=localhost)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
         }
 
         :Queries foreach($Query in $OracleQueries) {
@@ -104,12 +131,12 @@ function Invoke-OracleQuery {
 
             $QueryResult = @()
             try { 
-                $Connection = New-Object Oracle.ManagedDataAccess.Client.OracleConnection($ConnectionString)
+                $Connection = New-Object Oracle.$DllType.Client.OracleConnection($ConnectionString)
                 $cmd=$Connection.CreateCommand()
 
                 $cmd.CommandText= $Query
 
-                $da=New-Object Oracle.ManagedDataAccess.Client.OracleDataAdapter($cmd);
+                $da=New-Object Oracle.$DllType.Client.OracleDataAdapter($cmd);
                 $QueryResult=New-Object System.Data.DataTable
                 [void]$da.fill($QueryResult)
                 #This expands the results set to human readable form - without this it just shows "System.Data.DataRow" for each resultset.
@@ -219,7 +246,7 @@ function Invoke-OracleQuery {
     }
 }
 
-#Register Argument that runs 'lsnrctl status' on the target and extracts the database services for the TargetDatabase parameter.
+#This ArgumentCompleter runs 'lsnrctl status' on the target and extracts the database services, for suggestions for the TargetDatabase parameter.
 Register-ArgumentCompleter -CommandName Invoke-OracleQuery -ParameterName TargetDatabase -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameter)
     $TargetComputer = $fakeBoundParameter.TargetComputer
@@ -236,7 +263,7 @@ Register-ArgumentCompleter -CommandName Invoke-OracleQuery -ParameterName Target
         return $ServiceNames
     }
     
-    #Remove XDB service, CLRextProc and any PDB GUID services (which 32 chars long)
+    #Remove XDB service, CLRextProc and any PDB GUID services (which is 32 chars long)
     $DatabaseServices = $ServiceNames.ToUpper() | Where-Object{$_ -NotLike '*XDB' -and $_ -ne 'CLRExtProc' -and $_.Length -ne 32}
 
     return $DatabaseServices
