@@ -95,6 +95,9 @@ function Invoke-OracleQuery {
         Throw "No Oracle.ManagedDataAccess.dll or Oracle.DataAccess.dll found in the Oracle home."
     }
 
+    #Need to unblock the file so it can be imported on the target. It may be blocked by Windows if the home was copied from a different server, i.e. gold images.
+    $NetworkOracleDllLocation = "\\$TargetComputer\$OracleDllLocation" -replace ':', '$'
+    Unblock-File $NetworkOracleDllLocation
 
     $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential, $OracleDllLocation {
         param($TargetDatabase, $OracleQueries, $DatabaseCredential, $OracleDllLocation)
@@ -103,6 +106,9 @@ function Invoke-OracleQuery {
             Add-Type -Path $OracleDllLocation
         }
         catch {
+            $ExceptionMessage = $_.Exception.Message
+            Write-Error $ExceptionMessage
+
             Throw "Issue adding Oracle.ManagedDataAccess.dll from the Oracle Home."
         }
         
