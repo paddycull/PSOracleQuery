@@ -27,6 +27,7 @@
     - Now uses full connection string instead of EZConnect string to connect to databases.
 #>
 function Invoke-OracleQuery {
+    [Cmdletbinding()]
     param(   
         #Computer the database is on 
         [Parameter(Mandatory)]
@@ -70,10 +71,10 @@ function Invoke-OracleQuery {
     $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
 
     #Get the oracle home on the server so we can get then import the Oracle dll on the target 
-    $OracleServices = Get-WmiObject win32_service -ComputerName $TargetComputer | Where-Object {$_.Name -like 'OracleService*'} | Select-Object Name, PathName
+    $OracleServices = Get-WmiObject win32_service -ComputerName $TargetComputer -ErrorAction Continue | Where-Object {$_.Name -like 'OracleService*'} | Select-Object Name, PathName
 
     if(!$OracleServices) {
-        Throw "No Oracle services running on $env:COMPUTERNAME"
+        Throw "No Oracle services running on $TargetComputer"
     }
         
     #Only need one home, just use the first one returned.
@@ -82,35 +83,45 @@ function Invoke-OracleQuery {
     $OracleHome = $FirstOracleService.Substring(0, $FirstOracleService.lastIndexOf('\bin\ORACLE.EXE'))
     $NetworkOracleHome = "\\$TargetComputer\$OracleHome" -replace ':', '$'
 
-    #Check if the DLL is already on the server in the oracle home. If not, we upload it to the temp drive.
-    # Oracle 12g and up
+    #Need to unblock the dll files so it can be imported on the target. DLL's may be blocked by Windows if the home was copied from a different server, i.e. gold images.   
     if(Test-Path "$NetworkOracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll") {
-        $OracleDllLocation = "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+        Unblock-File "$NetworkOracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+        $NewerDllPath = "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
     }
-    #Oracle 11g
-    elseif(Test-Path "$NetworkOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll") {
-        $OracleDllLocation = "$OracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
-    }
-    else {
+    if(Test-Path "$NetworkOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll") {
+        Unblock-File "$NetworkOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
+        $OlderDllPath = "$OracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
+    } 
+
+    #If neither of the dll files are on teh target we can't query the database.
+    if(!$NewerDllPath -and !$OlderDllPath) {
         Throw "No Oracle.ManagedDataAccess.dll or Oracle.DataAccess.dll found in the Oracle home."
     }
 
-    #Need to unblock the file so it can be imported on the target. It may be blocked by Windows if the home was copied from a different server, i.e. gold images.
-    $NetworkOracleDllLocation = "\\$TargetComputer\$OracleDllLocation" -replace ':', '$'
-    Unblock-File $NetworkOracleDllLocation
+    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath {
+        param($TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath)
 
-    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential, $OracleDllLocation {
-        param($TargetDatabase, $OracleQueries, $DatabaseCredential, $OracleDllLocation)
+        $VerbosePreference=$Using:VerbosePreference
 
         try {
-            Add-Type -Path $OracleDllLocation
+            #Try to import the newer dll first.
+            Add-Type -Path $NewerDllPath
+            $OracleDllLocation = $NewerDllPath
         }
         catch {
-            $ExceptionMessage = $_.Exception.Message
-            Write-Error $ExceptionMessage
-
-            Throw "Issue adding Oracle.ManagedDataAccess.dll from the Oracle Home."
+            #If it fails we try to import the older version instead.
+            Write-Verbose $_.Exception.Message
+            Write-Verbose "Attempting to add the older DLL type."         
+            try {
+                Add-Type -Path $OlderDllPath
+                $OracleDllLocation = $OlderDllPath
+            }
+            catch {
+                Write-Error $_.Exception.Message
+                Throw "Issue adding Oracle.ManagedDataAccess.dll from the Oracle Home."      
+            }
         }
+        Write-Verbose "Using $OracleDllLocation to access database."
         
         #Set the DLL type depending on the file name that was loaded.
         if($OracleDllLocation -like '*ManagedDataAccess*') {
@@ -123,17 +134,19 @@ function Invoke-OracleQuery {
         $AllResults = @()
         $QueryCount = $OracleQueries.Count
 
+        #Get IP address for a better Connection String. Using "localhost" in connect descriptor caused queries on some servers to fail, using the IP address is better.
+        $TargetIpAddress = Test-Connection -ComputerName $env:COMPUTERNAME -Count 1  | Select-Object -ExpandProperty IPV4Address | Select-Object -ExpandProperty IPAddressToString
 
         #If a credential is passed, we use that instead of using windows auth
         if($DatabaseCredential) {
             $DbAccountUsername = $DatabaseCredential.UserName
             $DbAccountPassword = $DatabaseCredential.GetNetworkCredential().password
-            $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetComputer)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
+            $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
             Write-Host $ConnectionString
         }
 
         else {
-            $ConnectionString = "User Id=/;DBA Privilege=SYSDBA;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=localhost)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
+            $ConnectionString = "User Id=/;DBA Privilege=SYSDBA;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
         }
 
         :Queries foreach($Query in $OracleQueries) {
@@ -227,9 +240,9 @@ function Invoke-OracleQuery {
             #If more than one query, we return an object array instead og just the resultset.
             if($QueryCount -gt 1) { 
                 $QueryObject = New-Object PSObject     
-                $StringQuery = $Query | Out-String     
-                Add-Member -memberType NoteProperty -InputObject $QueryObject -Name Query -Value $StringQuery  
+                Add-Member -memberType NoteProperty -InputObject $QueryObject -Name Query -Value $Query  
                 Add-Member -memberType NoteProperty -InputObject $QueryObject -Name ResultSet -Value $QueryResult     
+                
                 $AllResults += $QueryObject 
 
                 #If there was a connection error, we do not continue with the remaining queries.
@@ -251,7 +264,7 @@ function Invoke-OracleQuery {
     if($Output.GetType().Name -like '*Object*') {
         $Output | Select-Object -Property * -ExcludeProperty PSComputerName, RunspaceId, PSShowComputerName
     }
-    #Otherwise we leave the output unchanged.
+    #Otherwise we leave the output unchanged. Using the select-object from above on a non object returns the length of the object, which is not what we want.
     else {
         $Output
     }
