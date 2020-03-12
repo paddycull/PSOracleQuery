@@ -25,6 +25,11 @@
     Update 2020-02-25
     - Now compatible with Oracle 11g
     - Now uses full connection string instead of EZConnect string to connect to databases.
+
+    Update 2020-03-12
+    - Now defaults to localhost to use the dll files, if the required files are available. This makes it faster and also allows the function to query db's on Linux servers.
+    - If ODP.NET is not installed, function tries to use the remote computers ODP.NET to query the database instead.
+
 #>
 function Invoke-OracleQuery {
     [Cmdletbinding()]
@@ -70,38 +75,62 @@ function Invoke-OracleQuery {
     $OracleQueries = $Query -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
     $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
 
-    #Get the oracle home on the server so we can get then import the Oracle dll on the target 
-    $OracleServices = Get-WmiObject win32_service -ComputerName $TargetComputer -ErrorAction Continue | Where-Object {$_.Name -like 'OracleService*'} | Select-Object Name, PathName
 
-    if(!$OracleServices) {
-        Throw "No Oracle services running on $TargetComputer"
+    #Check if the localhost has ODP.NET installed. We use the local files if it does.
+    $LocalOracleHome = (Get-ItemProperty "HKLM:SOFTWARE\ORACLE\KEY_ora*" -Name ORACLE_HOME).ORACLE_HOME | Select-Object -First 1
+
+    #Default location of the older and newer versions of the ODP.NET dll files.
+    $NewerDllPath = "$LocalOracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+    $OlderDllPath = "$LocalOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
+    
+    if((Test-Path $NewerDllPath) -or (Test-Path $OlderDllPath)) {
+        $ComputerWithODP = "localhost"
+        Write-Verbose "ODP.NET installed locally - Running query from localhost."
+        $OracleHome = $LocalOracleHome
     }
-        
-    #Only need one home, just use the first one returned.
-    $FirstOracleService = $OracleServices[0].PathName
-    #Split service string to extract home version and location
-    $OracleHome = $FirstOracleService.Substring(0, $FirstOracleService.lastIndexOf('\bin\ORACLE.EXE'))
-    $NetworkOracleHome = "\\$TargetComputer\$OracleHome" -replace ':', '$'
 
-    #Need to unblock the dll files so it can be imported on the target. DLL's may be blocked by Windows if the home was copied from a different server, i.e. gold images.   
-    if(Test-Path "$NetworkOracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll") {
-        Unblock-File "$NetworkOracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
+    else {    
+        Write-Verbose "ODP.NET is not installed locally. Running query on $TargetComputer."
+
+        $OracleHome = Invoke-Command -ComputerName $TargetComputer -ScriptBlock {
+            (Get-ItemProperty "HKLM:SOFTWARE\ORACLE\KEY_ora*" -Name ORACLE_HOME).ORACLE_HOME | Select-Object -First 1
+        }
+        if(!$OracleHome) {
+            Throw "No Oracle Home on $TargetComputer"
+        }
+
+        Write-Verbose "Using the $OracleHome Oracle home on $TargetComputer to get the dll files."
+
+        #Default location of the older and newer versions of the ODP.NET dll files.
         $NewerDllPath = "$OracleHome\ODP.NET\managed\common\Oracle.ManagedDataAccess.dll"
-    }
-    if(Test-Path "$NetworkOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll") {
-        Unblock-File "$NetworkOracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
         $OlderDllPath = "$OracleHome\ODP.NET\bin\2.x\Oracle.DataAccess.dll"
-    } 
 
-    #If neither of the dll files are on teh target we can't query the database.
-    if(!$NewerDllPath -and !$OlderDllPath) {
-        Throw "No Oracle.ManagedDataAccess.dll or Oracle.DataAccess.dll found in the Oracle home."
-    }
+        $NetworkNewerDllPath = "\\$TargetComputer\$NewerDllPath" -replace ':', '$'
+        $NetworkOlderDllPath = "\\$TargetComputer\$OlderDllPath" -replace ':', '$'
 
-    $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath {
-        param($TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath)
+        $NewDllExists = Test-Path $NetworkNewerDllPath
+        $OldDllExists = Test-Path $NetworkOlderDllPath
 
-        $VerbosePreference=$Using:VerbosePreference
+        #Need to unblock the dll files so it can be imported on the target. DLL's may be blocked by Windows if the home was copied from a different server, i.e. gold images.   
+        if($NewDllExists) {
+            Unblock-File $NetworkNewerDllPath
+        }
+        if($OldDllExists) {
+            Unblock-File $NetworkOlderDllPath
+        } 
+
+        #If neither of the dll files are on the target we can't query the database.
+        if(!$NewDllExists -and !$OldDllExists) {
+            Throw "No Oracle.ManagedDataAccess.dll or Oracle.DataAccess.dll found in the Oracle home $OracleHome of $TargetComputer."
+        }     
+        
+        $ComputerWithODP = $TargetComputer
+
+    }#End else
+
+    #The query block to run on localhost or the TargetComputer, depending on if ODP is installed locally.
+    $QueryScriptBlock = { 
+        param($TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseValue, $VerbosePreference)
 
         try {
             #Try to import the newer dll first.
@@ -135,19 +164,21 @@ function Invoke-OracleQuery {
         $QueryCount = $OracleQueries.Count
 
         #Get IP address for a better Connection String. Using "localhost" in connect descriptor caused queries on some servers to fail, using the IP address is better.
-        $TargetIpAddress = Test-Connection -ComputerName $env:COMPUTERNAME -Count 1  | Select-Object -ExpandProperty IPV4Address | Select-Object -ExpandProperty IPAddressToString
+        $TargetIpAddress = Test-Connection -ComputerName $TargetComputer -Count 1  | Select-Object -ExpandProperty IPV4Address | Select-Object -ExpandProperty IPAddressToString
 
         #If a credential is passed, we use that instead of using windows auth
         if($DatabaseCredential) {
             $DbAccountUsername = $DatabaseCredential.UserName
             $DbAccountPassword = $DatabaseCredential.GetNetworkCredential().password
             $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
-            Write-Host $ConnectionString
         }
 
         else {
             $ConnectionString = "User Id=/;DBA Privilege=SYSDBA;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
         }
+
+        Write-Verbose "Connection String: $ConnectionString"
+
 
         :Queries foreach($Query in $OracleQueries) {
             #Clear any empty lines and uneeded whitespace.
@@ -258,13 +289,21 @@ function Invoke-OracleQuery {
         }#End foreachloop
         
         return $AllResults
+    }#EndScriptBlock
+
+    #If ODP is installed locally, run it from localhost. Otherwise run it on the TargetComputer
+    if($ComputerWithODP -eq "localhost") {
+        $Output = Invoke-Command -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath -ScriptBlock $QueryScriptBlock
+    }
+    else {
+        $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerbosePreference -ScriptBlock $QueryScriptBlock
     }
 
     #If the Output type is an object, it means a proper query resultset has been returned, so we remove the PSComputerName, RunspaceId and PSShowComputerName that gets added to objects by PowerShell after the Invoke-Command
     if($Output.GetType().Name -like '*Object*') {
         $Output | Select-Object -Property * -ExcludeProperty PSComputerName, RunspaceId, PSShowComputerName
     }
-    #Otherwise we leave the output unchanged. Using the select-object from above on a non object returns the length of the object, which is not what we want.
+    #Otherwise we leave the output unchanged. Using the select-object from above on a non object returns the length of the variable, which is not what we want.
     else {
         $Output
     }
