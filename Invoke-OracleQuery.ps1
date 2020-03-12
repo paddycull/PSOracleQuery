@@ -130,7 +130,9 @@ function Invoke-OracleQuery {
 
     #The query block to run on localhost or the TargetComputer, depending on if ODP is installed locally.
     $QueryScriptBlock = { 
-        param($TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseValue, $VerbosePreference)
+        param($TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseSetting)
+
+        $VerbosePreference = $VerboseSetting
 
         try {
             #Try to import the newer dll first.
@@ -291,12 +293,15 @@ function Invoke-OracleQuery {
         return $AllResults
     }#EndScriptBlock
 
+    #Need to pass verbose setting into the scriptblock so they are shown on both localhost and TargetComputer
+    $VerboseSetting = $VerbosePreference
+
     #If ODP is installed locally, run it from localhost. Otherwise run it on the TargetComputer
     if($ComputerWithODP -eq "localhost") {
-        $Output = Invoke-Command -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath -ScriptBlock $QueryScriptBlock
+        $Output = Invoke-Command -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
     }
     else {
-        $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerbosePreference -ScriptBlock $QueryScriptBlock
+        $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
     }
 
     #If the Output type is an object, it means a proper query resultset has been returned, so we remove the PSComputerName, RunspaceId and PSShowComputerName that gets added to objects by PowerShell after the Invoke-Command
