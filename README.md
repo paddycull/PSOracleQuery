@@ -1,7 +1,9 @@
 # Invoke-OracleQuery
 This is a PowerShell function to query an Oracle database on Windows, using Windows Authentication or Oracle user credentials. The user can pass a query directly, or a SQL file to run against a database.
 
-By default, the function connects to the target server using the current user credentials, and connects to the database as SYSDBA as the current user using Windows Authentication, similar to "connect /@DB as sysdba". Alternatively, you can specify the credentials to connect to the Target with "TargetCredential", and/or you can set the database user to connect with using "DatabaseCredential".
+The function uses the ODP.NET dll files on the localhost if they exist. If they aren't on the localhost, it connects to the target server and uses the dll files on there to access the database.
+
+By default, it uses the current user credentials to connect to remote servers as needed, and connects to the database as SYSDBA as the current user using Windows Authentication, similar to "connect /@DB as sysdba". Alternatively, you can specify the credentials to connect to the TargetComputer with "TargetCredential", and/or you can set the database user to connect with using "DatabaseCredential".
 
 The function gets an Oracle Home on the TargetServer, and gets the Oracle.ManagedDataAccess.dll from there. This means there are no external dependencies. 
 
