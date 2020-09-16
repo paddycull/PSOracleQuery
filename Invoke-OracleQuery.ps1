@@ -48,10 +48,14 @@ function Invoke-OracleQuery {
         #User credential to connect to the database with. Defaults to current windows user as sysdba if not passed.
         [System.Management.Automation.PSCredential] $DatabaseCredential,
 
-        #Query to run
+        # Query to run
         [string] $Query,
+        
         #Sql file to run against the database.
-        [string] $SqlFile
+        [string] $SqlFile,
+
+        #Connect as sysdba
+        [switch]$AsSysdba
     )
 
     if(!$Query -and !$SqlFile){
@@ -130,7 +134,7 @@ function Invoke-OracleQuery {
 
     #The query block to run on localhost or the TargetComputer, depending on if ODP is installed locally.
     $QueryScriptBlock = { 
-        param($TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseSetting)
+        param($TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $AsSysdba, $OlderDllPath, $NewerDllPath, $VerboseSetting)
 
         $VerbosePreference = $VerboseSetting
 
@@ -172,7 +176,13 @@ function Invoke-OracleQuery {
         if($DatabaseCredential) {
             $DbAccountUsername = $DatabaseCredential.UserName
             $DbAccountPassword = $DatabaseCredential.GetNetworkCredential().password
-            $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
+
+            if($AsSysdba) {
+                $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;DBA Privilege=SYSDBA;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
+            }
+            else {
+                $ConnectionString = "User Id=$DbAccountUsername;Password=$DbAccountPassword;Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$TargetIpAddress)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=$TargetDatabase)))"
+            }
         }
 
         else {
@@ -298,10 +308,10 @@ function Invoke-OracleQuery {
 
     #If ODP is installed locally, run it from localhost. Otherwise run it on the TargetComputer
     if($ComputerWithODP -eq "localhost") {
-        $Output = Invoke-Command -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
+        $Output = Invoke-Command -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $AsSysdba, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
     }
     else {
-        $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
+        $Output = Invoke-Command -ComputerName $TargetComputer -Credential $TargetCredential -HideComputerName -ArgumentList $TargetComputer, $TargetDatabase, $OracleQueries, $DatabaseCredential, $AsSysdba, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
     }
 
     #If the Output type is an object, it means a proper query resultset has been returned, so we remove the PSComputerName, RunspaceId and PSShowComputerName that gets added to objects by PowerShell after the Invoke-Command
