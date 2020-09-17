@@ -42,7 +42,7 @@ function Invoke-OracleQuery {
         [Parameter(Mandatory)]
         [string] $ServiceName,
         
-        #Credential to connect to the target computer. Defaults to current credential if not passed.
+        #Credential to connect to the target computer. Defaults to current credential if not passed. This is only used if ODP.NET is not installed locally.
         [System.Management.Automation.PSCredential] $TargetCredential=[System.Management.Automation.PSCredential]::Empty, 
 
         #User credential to connect to the database with. Defaults to current windows user as sysdba if not passed.

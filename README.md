@@ -1,14 +1,8 @@
 # Invoke-OracleQuery
-This is a PowerShell function to query an Oracle database from Windows, using Windows Authentication or Oracle user credentials. The user can pass a query directly, or a SQL file to run against a database. It works for databases hosted on both Windows and Linux servers.
+This is a PowerShell function to query an Oracle database from Windows, using OS Authentication or database user credentials. The user can pass queries or SQL files to run against a database. It works for databases hosted on both Windows and Linux servers.
 
-The function uses the ODP.NET dll files on the localhost if they exist. If they aren't on the localhost, it connects to the target server and uses the dll files on there to access the database. 
-*Note - this is only possible if the target server is a Windows machine. If it's a Linux server you need to have ODP.NET installed locally.*
-
-By default, it uses the current user credentials to connect to remote servers if needed, and connects to the database as SYSDBA as the current user using Windows Authentication, similar to "connect /@DB as sysdba". Alternatively, you can specify the credentials to connect to the HostName with "TargetCredential", and/or you can set the database user to connect with using "DatabaseCredential".
-
-The function gets an Oracle Home on the TargetServer, and gets the Oracle.ManagedDataAccess.dll from there. This means there are no external dependencies. 
-
-If there is only one query, the function returns the resultset in a PSObject as is. If there multiple queries, it creates a PSObject array that contains the Query and the ResultSet of that query. Examples of usage and output are below.
+#### Dependencies
+To access the database, the function uses ODP.NET dll files. If these are not installed locally, the function will try to use the dll files from the Oracle home on the target server to access the database. This only works if the target server is a Windows server, if it's a Linux server you need to have ODP.NET installed locally. 
 
 # Output Examples
 
@@ -52,7 +46,11 @@ The function also returns error and success messages. This works in single queri
 ![alt text](./ExampleScreenshots/SuccessMessage.png "Multiple Query example")
 
 ## Alternative Credentials
-The function also supports different Credentials. The TargetCredential is used to connect to the target machine, and the DatabaseCredential is used to connect to the database. TargetCredential defaults to current user, and if DatabaseCredential is not passed it connects as sysdba via Windows Authentication. 
+The function also supports optionally using different credentials. The TargetCredential is used to connect to the target machine if ODP.NET is not insalled locally, and the DatabaseCredential is used to connect to the database. 
+
+TargetCredential defaults to current user credentials, and if DatabaseCredential is not passed it connects as sysdba using OS Authentication. (similar to using "connect /@DbName as sysdba")
+
+
 ```powershell 
 $TargetCredential = Get-Credential 
 $DatabaseCredential = Get-Credential -UserName "system" -Message "Enter the user password"
