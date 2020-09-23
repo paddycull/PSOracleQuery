@@ -87,8 +87,8 @@ function Invoke-OracleQuery {
         $NoCommentQuery = ($Query | Where-Object {$_ -notlike 'set *' -and $_ -notlike 'PROMPT*' -and $_ -notlike 'column*' -and $_ -notlike 'compute*'}) | Out-String
 
         #Get the location of Declare/Begin/End blocks as well as the locations of the end command characters - i.e. a ; outside single quotes or a / on it's own line
-        $BeginEndBlocks = $NoCommentQuery | Select-String 'DECLARE[^/]+/|DECLARE[^/]+END;|BEGIN[^/]+/|BEGIN[^/]+END;' -AllMatches | %{ $_.Matches } | Sort-Object Index -Descending
-        $EndCommandCharacters = $NoCommentQuery | Select-String ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)|`r`n/" -AllMatches | %{ $_.Matches } 
+        $BeginEndBlocks = $NoCommentQuery | Select-String 'DECLARE[^/]+/|DECLARE[^/]+END;|BEGIN[^/]+/|BEGIN[^/]+END;' -AllMatches | ForEach-Object { $_.Matches } | Sort-Object Index -Descending
+        $EndCommandCharacters = $NoCommentQuery | Select-String ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)|`r`n/" -AllMatches | ForEach-Object { $_.Matches } 
 
         #Find any end command characters that are not within a PL/SQL block
         $NonBlockCommands = $EndCommandCharacters | ForEach-Object {
@@ -137,7 +137,7 @@ function Invoke-OracleQuery {
             if($command.Length -gt 3) {
                 #remove trailing backslash from a PL/SQL block if it exists. The trailing backslash will cause an error.
                 if($command.Value[-1] -eq '/') {
-                    $sqlText = $command.Value -replace “.$”
+                    $sqlText = $command.Value -replace ".$"
                 }
                 else {
                     $sqlText = $command.Value
@@ -215,7 +215,17 @@ function Invoke-OracleQuery {
 
     #The query block to run on localhost or the target host, depending on if ODP is installed locally.
     $QueryScriptBlock = { 
-        param($HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $ExitOnError, $OlderDllPath, $NewerDllPath, $VerboseSetting)
+        param(
+            $HostName, 
+            $ServiceName, 
+            $OracleQueries, 
+            [PSCredential]$DatabaseCredential, 
+            $AsSysdba, 
+            $ExitOnError, 
+            $OlderDllPath, 
+            $NewerDllPath, 
+            $VerboseSetting
+        )
 
         $VerbosePreference = $VerboseSetting
 
