@@ -30,6 +30,11 @@
     - Now defaults to localhost to use the dll files, if the required files are available. This makes it faster and also allows the function to query db's on Linux servers.
     - If ODP.NET is not installed, function tries to use the remote computers ODP.NET to query the database instead.
 
+    Update 2020-09-23
+    - Query can now contain PL/SQL blocks.
+    - Automatically remove comment lines - they do not work with ODP.NET commands.
+    - Added ExitOnError switch so the user can decide to stop the execution when a query encounters an error. Default behaviour is to continue with remaining queries.
+
 #>
 function Invoke-OracleQuery {
     [Cmdletbinding()]
@@ -49,13 +54,16 @@ function Invoke-OracleQuery {
         [System.Management.Automation.PSCredential] $DatabaseCredential,
 
         # Query to run
-        [string] $Query,
+        [string[]] $Query,
         
         #Sql file to run against the database.
         [string] $SqlFile,
 
         #Connect as sysdba
-        [switch]$AsSysdba
+        [switch]$AsSysdba,
+
+        #Optionally stop as soon as a query encounters an error. Default behaviour is to continue with the remaining queries after an error occcurs.
+        [switch]$ExitOnError
     )
 
     if(!$Query -and !$SqlFile){
@@ -67,18 +75,91 @@ function Invoke-OracleQuery {
     }
 
     if($SqlFile) {
-        $Query = (Get-Content $SqlFile | Out-String).Trim()
+        $Query = Get-Content $SqlFile -ErrorAction Stop
     }
+   
 
-    #If the final character in the query is a slash or semicolon, we remove it, as the oracleManagedDataAccess module does not allow these characters at the end of a query
-    if($Query[-1] -eq "/" -or $Query[-1] -eq ';') {
-        $Query = $Query -replace ".$"
-    }
+    ##################################
+    # Start  Query Prep
+    ##################################
+    #Split the input command up. We need to account for PL/SQL Declare/Begin/End blocks
+        #Remove comments, they don't work when using ODP.NET to run the query.
+        $NoCommentQuery = ($Query | Where-Object {$_ -notlike 'set *' -and $_ -notlike 'PROMPT*' -and $_ -notlike 'column*' -and $_ -notlike 'compute*'}) | Out-String
 
-    #Split the queries into individual queries, either on semicolon outside single quotes, or a / on it's own line - i.e. the query terminators in Oracle.
-    $OracleQueries = $Query -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
-    $OracleQueries = $OracleQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
+        #Get the location of Declare/Begin/End blocks as well as the locations of the end command characters - i.e. a ; outside single quotes or a / on it's own line
+        $BeginEndBlocks = $NoCommentQuery | Select-String 'DECLARE[^/]+/|DECLARE[^/]+END;|BEGIN[^/]+/|BEGIN[^/]+END;' -AllMatches | %{ $_.Matches } | Sort-Object Index -Descending
+        $EndCommandCharacters = $NoCommentQuery | Select-String ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)|`r`n/" -AllMatches | %{ $_.Matches } 
 
+        #Find any end command characters that are not within a PL/SQL block
+        $NonBlockCommands = $EndCommandCharacters | ForEach-Object {
+            $BlockChecks = 0
+            foreach($block in $BeginEndBlocks) {
+                $StartBlockLocation = $block.Index
+                $EndBlockLocation = ($block.Index + $Block.Length)
+
+                #If the index of the end character is outside the block range, we count the block as checked
+                if($_.Index -le $StartBlockLocation -or $_.Index -ge $EndBlockLocation) {
+                    $BlockChecks++
+                }
+            }
+
+            #Only if all blocks have been checked and do not contain the character do we include this as a non block character.
+            if($BlockChecks -eq $BeginEndBlocks.Count) {
+                $_
+            }
+        }
+
+        #Remove the PL/SQL Blocks from the query (so we can find non block commands)
+        $RemovedEndBlocks = $NoCommentQuery
+        foreach($block in $BeginEndBlocks) {
+            $startIndex = $block.Index
+            $Length = $block.Length
+            $RemovedEndBlocks = $RemovedEndBlocks.Remove($startIndex, $Length)
+        }
+
+
+        #Split the remaining, non block queries
+        $NonBlockQueries = $RemovedEndBlocks -Split ";+(?=(?:[^\']*\'[^\']*\')*[^\']*$)"
+        $NonBlockQueries = $NonBlockQueries.Split([string[]]"`r`n/", [StringSplitOptions]::None)
+
+        #Cleanup and remove any empty elements
+        $NonBlockQueries = ($NonBlockQueries.Trim()) | Where-Object {$_}
+
+        #Now that we know the locations of any blocks and non-block commands, we can build the array of commands in order that they appear.
+        $AllCommandLocations = $BeginEndBlocks + $NonBlockCommands | Sort-Object Index
+
+        [string[]]$OracleQueries = @()
+
+        $CommandIndex = 0
+        foreach($command in $AllCommandLocations) {
+            #Any object with a length of over 3 is a command block, as opposed to ';' or '\r\n/'
+            
+            if($command.Length -gt 3) {
+                #remove trailing backslash from a PL/SQL block if it exists. The trailing backslash will cause an error.
+                if($command.Value[-1] -eq '/') {
+                    $sqlText = $command.Value -replace “.$”
+                }
+                else {
+                    $sqlText = $command.Value
+                }
+
+                $OracleQueries += $sqlText
+            }
+            else {
+                #We can only access using the array index if there is more than one member
+                if($NonBlockQueries.Count -gt 1) {
+                    $OracleQueries += $NonBlockQueries[$CommandIndex]
+                }
+                else {
+                    $OracleQueries += $NonBlockQueries
+                }
+                $commandIndex++
+            }
+        }
+
+    ##################################
+    # End Query Prep
+    ##################################
 
     #Check if the localhost has ODP.NET installed. We use the local files if it does.
     $LocalOracleHome = (Get-ItemProperty "HKLM:SOFTWARE\ORACLE\KEY_ora*" -Name ORACLE_HOME).ORACLE_HOME | Select-Object -First 1
@@ -134,7 +215,7 @@ function Invoke-OracleQuery {
 
     #The query block to run on localhost or the target host, depending on if ODP is installed locally.
     $QueryScriptBlock = { 
-        param($HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $OlderDllPath, $NewerDllPath, $VerboseSetting)
+        param($HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $ExitOnError, $OlderDllPath, $NewerDllPath, $VerboseSetting)
 
         $VerbosePreference = $VerboseSetting
 
@@ -213,6 +294,8 @@ function Invoke-OracleQuery {
             catch {
                 $ErrorMessage = $_.Exception.Message.ToString()
 
+                $EncounteredError = $true
+
                 #If the error message is a connection error, we set connectionError to true, so we can break out of the query loop.
                 if(($ErrorMessage -like '*ORA-12154: TNS:could not resolve the connect identifier specified*') -or ($ErrorMessage -like "*ORA-01017: invalid username/password; logon denied*")){
                     $ConnectionError = $True
@@ -244,31 +327,34 @@ function Invoke-OracleQuery {
                 $QuerySubjectType = (Get-Culture).TextInfo.ToTitleCase($QueryWords[1])
 
                 #If the verb is SELECT and there is no query result, that means the result set is empty.
-                if($QueryVerb -like 'SELECT') {
+                if($QueryVerb -eq 'SELECT') {
                     $QueryResult = "no rows selected"
+                }
+                elseif($QueryVerb -like 'BEGIN*' -or $QueryVerb -like 'DECLARE*') {
+                    $QueryResult = "PL/SQL procedure successfully completed."                    
                 }
                 
                 #if it wasn't a select, and there was nothing returned, it means it was successful. So we create a result message.
                 else {
-                    if($QueryVerb -like 'DROP'){
+                    if($QueryVerb -eq 'DROP'){
                         $QueryVerbPastTense = "dropped"
                     }
-                    elseif($QueryVerb -like 'CREATE'){
+                    elseif($QueryVerb -eq 'CREATE'){
                         $QueryVerbPastTense = "created"
                     }
-                    elseif($QueryVerb -like 'TRUNCATE'){
+                    elseif($QueryVerb -eq 'TRUNCATE'){
                         $QueryVerbPastTense = "truncated"
                     }
-                    elseif($QueryVerb -like 'DELETE'){
+                    elseif($QueryVerb -eq 'DELETE'){
                         $QueryVerbPastTense = "deleted"
                     }
-                    elseif($QueryVerb -like 'ALTER'){
+                    elseif($QueryVerb -eq 'ALTER'){
                         $QueryVerbPastTense = "altered"
                     }
-                    elseif($QueryVerb -like 'EXECUTE'){
+                    elseif($QueryVerb -eq 'EXECUTE'){
                         $QueryVerbPastTense = "executed"
                     }
-                    elseif($QueryVerb -like 'GRANT'){
+                    elseif($QueryVerb -eq 'GRANT'){
                         $QueryVerbPastTense = "granted"
                     }
                     #If it's not one of the above verbs, we default to succeeded.
@@ -290,7 +376,11 @@ function Invoke-OracleQuery {
 
                 #If there was a connection error, we do not continue with the remaining queries.
                 if($ConnectionError){
-                    Write-Host "[ERROR] : Issue connecting to the database. Not continuing with remaining queries to prevent lockouts." -ForegroundColor Red
+                    Write-Warning "Issue connecting to the database. Not continuing with remaining queries to prevent lockouts."
+                    break Queries
+                }
+                elseif($EncounteredError -and $ExitOnError) {
+                    Write-Warning "Error encountered and EncounteredError switch is set to true. Stopping script."
                     break Queries
                 }
             }
@@ -308,10 +398,10 @@ function Invoke-OracleQuery {
 
     #If ODP is installed locally, run it from localhost. Otherwise run it on the target host
     if($ComputerWithODP -eq "localhost") {
-        $Output = Invoke-Command -ArgumentList $HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
+        $Output = Invoke-Command -ArgumentList $HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $ExitOnError, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
     }
     else {
-        $Output = Invoke-Command -ComputerName $HostName -Credential $TargetCredential -HideComputerName -ArgumentList $HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
+        $Output = Invoke-Command -ComputerName $HostName -Credential $TargetCredential -HideComputerName -ArgumentList $HostName, $ServiceName, $OracleQueries, $DatabaseCredential, $AsSysdba, $ExitOnError, $OlderDllPath, $NewerDllPath, $VerboseSetting -ScriptBlock $QueryScriptBlock
     }
 
     #If the Output type is an object, it means a proper query resultset has been returned, so we remove the PSComputerName, RunspaceId and PSShowComputerName that gets added to objects by PowerShell after the Invoke-Command

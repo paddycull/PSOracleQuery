@@ -36,6 +36,33 @@ $SqlFileOutput[1].ResultSet | Format-Table
 ![alt text](./ExampleScreenshots/SqlFileExample.png "SQlFile example")
 
 
+### Compatible with PL/SQL blocks
+The function can parse SQL blocks correctly as well. It searches for commands within DECLARE and END commands or BEGIN and END commands. Examples of this is shown below;
+
+```powershell
+$Query = "
+BEGIN
+  DBMS_OUTPUT.put_line ('Hello World!');
+END;
+/
+
+DECLARE
+  l_message  
+  VARCHAR2 (100) := 'Hello World!';
+BEGIN
+  DBMS_OUTPUT.put_line (l_message);
+EXCEPTION
+  WHEN OTHERS
+  THEN
+    DBMS_OUTPUT.put_line (SQLERRM);
+END;
+"
+
+Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query $Query
+```
+##### Output
+![alt text](./ExampleScreenshots/PLSQLBlock_exampleResult.png "PL/SQL block example")
+
 ### Error/Success Messages
 The function also returns error and success messages. This works in single queries and multiple queries. In the case of multiple queries, it gets stored in the ResultSet property.
 
