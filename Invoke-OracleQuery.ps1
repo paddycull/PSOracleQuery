@@ -126,12 +126,14 @@ function Invoke-OracleQuery {
         $NonBlockQueries = ($NonBlockQueries.Trim()) | Where-Object {$_}
 
         #Now that we know the locations of any blocks and non-block commands, we can build the array of commands in order that they appear.
-        $AllCommandLocations = $BeginEndBlocks + $NonBlockCommands | Sort-Object Index
+        $AllCommandLocations = @()
+        $AllCommandLocations += $BeginEndBlocks 
+        $AllCommandLocations += $NonBlockCommands
 
         [string[]]$OracleQueries = @()
 
         $CommandIndex = 0
-        foreach($command in $AllCommandLocations) {
+        foreach($command in ($AllCommandLocations | Sort-Object Index)) {
             #Any object with a length of over 3 is a command block, as opposed to ';' or '\r\n/'
             
             if($command.Length -gt 3) {
