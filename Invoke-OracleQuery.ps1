@@ -159,6 +159,16 @@ function Invoke-OracleQuery {
             }
         }
 
+        #This ensures that if the last query in the command is missing a ';' is also included. CommandLocations works off of ';' locations, so if it's missing one it means the query is at the end, but we still need to include it.
+        if($NonBlockQueries.Count -eq ($AllCommandLocations.Count + 1)) {
+            if($NonBlockQueries.Count -gt 1) {
+                $OracleQueries += $NonBlockQueries[-1] 
+            }
+            else {
+                $OracleQueries += $NonBlockQueries
+            }
+        }
+
     ##################################
     # End Query Prep
     ##################################
