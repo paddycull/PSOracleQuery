@@ -1,8 +1,8 @@
 # Invoke-OracleQuery
-This is a PowerShell function to query an Oracle database from Windows, using OS Authentication or database user credentials. The user can pass queries or SQL files to run against a database. It works for databases hosted on both Windows and Linux servers.
+This is a PowerShell module to query an Oracle database from Windows, using OS Authentication or database user credentials. The user can pass queries or SQL files to run against a database. It works for databases hosted on both Windows and Linux servers.
 
 #### Dependencies
-To access the database, the function uses ODP.NET dll files. The required file is located in the bin directory of this module.
+To access the database, the function uses ODP.NET dll files. The required file is located in the bin directory of this module, and is loaded automatically by the function.
 
 # Output Examples
 
@@ -86,5 +86,5 @@ Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select use
 ```
 
 ## Argument Completer
-The function also has an ArgumentCompleter for the ServiceName parameter. It does this by running "lsnrctl status" on the target, and parsing the result to contain only service names. This will Argument completer will only work if the target Hostname is a Windows machine. Example screenshot is below;
+The function also has an ArgumentCompleter for the ServiceName parameter. It does this by running "lsnrctl status" on the target, and parsing the result to contain only service names. This Argument completer will only work if the target Hostname is a Windows machine. Example screenshot is below;
 ![alt text](./ExampleScreenshots/ArgumentCompleter.png "ArgumentCompleter example")
