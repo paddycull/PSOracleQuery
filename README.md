@@ -2,7 +2,7 @@
 This is a PowerShell function to query an Oracle database from Windows, using OS Authentication or database user credentials. The user can pass queries or SQL files to run against a database. It works for databases hosted on both Windows and Linux servers.
 
 #### Dependencies
-To access the database, the function uses ODP.NET dll files. If these are not installed locally, the function will try to use the dll files from the Oracle home on the target server to access the database. This only works if the target server is a Windows server, if it's a Linux server you need to have ODP.NET installed locally. 
+To access the database, the function uses ODP.NET dll files. The required file is located in the bin directory of this module.
 
 # Output Examples
 
@@ -73,21 +73,18 @@ The function also returns error and success messages. This works in single queri
 ![alt text](./ExampleScreenshots/SuccessMessage.png "Multiple Query example")
 
 ## Alternative Credentials
-The function also supports optionally using different credentials. The TargetCredential is used to connect to the target machine if ODP.NET is not insalled locally, and the DatabaseCredential is used to connect to the database. 
-
-TargetCredential defaults to current user credentials, and if DatabaseCredential is not passed it connects as sysdba using OS Authentication. (similar to using "connect /@DbName as sysdba")
-
+The function also supports optionally using different credentials to connect to the database. If DatabaseCredential is not passed it connects as sysdba using OS Authentication. (similar to using "connect /@DbName as sysdba")
 
 ```powershell 
-$TargetCredential = Get-Credential 
 $DatabaseCredential = Get-Credential -UserName "system" -Message "Enter the user password"
-Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;" -TargetCredential $TargetCredential -DatabaseCredential $DatabaseCredential
+Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;" -DatabaseCredential $DatabaseCredential
 ```
 To connect as sysdba, you can do so by using;
 ```powershell 
-$DatabaseCredential = Get-Credential -UserName "system" -Message "Enter the user password"
-Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;" -TargetCredential $TargetCredential -DatabaseCredential $DatabaseCredential -AsSysdba
-````
+$DatabaseCredential = Get-Credential -UserName "sys" -Message "Enter the user password"
+Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;" -DatabaseCredential $DatabaseCredential -AsSysdba
+```
+
 ## Argument Completer
-The function also has an ArgumentCompleter for the ServiceName parameter. It does this by running "lsnrctl status" on the target, and parsing the result to contain only service names. Example screenshot is below;
+The function also has an ArgumentCompleter for the ServiceName parameter. It does this by running "lsnrctl status" on the target, and parsing the result to contain only service names. This will Argument completer will only work if the target Hostname is a Windows machine. Example screenshot is below;
 ![alt text](./ExampleScreenshots/ArgumentCompleter.png "ArgumentCompleter example")

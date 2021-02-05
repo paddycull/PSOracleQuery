@@ -1,0 +1,2 @@
+#This is used for Invoke-OracleQuery so that connecting to a dba using "/ as sysdba" is possible.
+SQLNET.AUTHENTICATION_SERVICES = (NTS)
