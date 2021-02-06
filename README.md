@@ -4,6 +4,12 @@ This is a PowerShell module to query an Oracle database from Windows, using OS A
 #### Dependencies
 To access the database, the function uses ODP.NET dll files. The required file is located in the bin directory of this module, and is loaded automatically by the function.
 
+# Installation
+Run the following command to install PSOracleQuery from the PowerShell Gallery:
+```powershell
+Install-Module PSOracleQuery
+```
+
 # Output Examples
 
 ### Simple Query
