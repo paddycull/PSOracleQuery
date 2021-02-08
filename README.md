@@ -23,10 +23,14 @@ Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select use
 
 
 ### Multiple Queries
-The below query demonstrates the resultset of a multiple queries passed via the Query variable. Note the Query and ResultSet properties.
+The below query demonstrates the resultset of a multiple queries passed via the Query variable. 
 
 ```powershell 
 Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users; select * from dual;" 
+
+#OR
+
+Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;",  "select * from dual;" 
 ```
 ##### Output
 ![alt text](./ExampleScreenshots/MultipleQueries.png "Multiple Query example")
