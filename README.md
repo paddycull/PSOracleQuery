@@ -1,6 +1,8 @@
 # Invoke-OracleQuery
 This is a PowerShell module to query an Oracle database from Windows, using OS Authentication or database user credentials. The user can pass queries or SQL files to run against a database. It works for databases hosted on both Windows and Linux servers.
 
+**NOTE: This is useful for running queries and executing simple updates/creates - do NOT use this for complex DDL queries, especially on production systems - as I can't guarantee something won't go wrong with the query parsing.**
+
 #### Dependencies
 To access the database, the function uses ODP.NET dll files. The required file is located in the bin directory of this module, and is loaded automatically by the function.
 
