@@ -91,7 +91,7 @@ The function also supports optionally using different credentials to connect to 
 $DatabaseCredential = Get-Credential -UserName "system" -Message "Enter the user password"
 Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;" -DatabaseCredential $DatabaseCredential
 ```
-To connect as sysdba, you can do so by using;
+To connect as sysdba, you can do so by using -AsSysdba;
 ```powershell 
 $DatabaseCredential = Get-Credential -UserName "sys" -Message "Enter the user password"
 Invoke-OracleQuery -HostName HostServer1 -ServiceName PATCDB1 -Query "Select username from dba_users;" -DatabaseCredential $DatabaseCredential -AsSysdba
